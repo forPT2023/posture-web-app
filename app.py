@@ -2,11 +2,10 @@ import streamlit as st
 import cv2
 import mediapipe as mp
 import numpy as np
-import time
 import os
 from PIL import Image
 
-# MediaPipeのPoseモデルを初期化
+# MediaPipeのPoseモデルを使用
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
 mp_drawing = mp.solutions.drawing_utils
@@ -14,7 +13,7 @@ mp_drawing = mp.solutions.drawing_utils
 # Streamlitの設定
 st.set_page_config(page_title="姿勢分析アプリ", layout="centered")
 st.title("📸 立位姿勢（矢状面）分析アプリ")
-st.write("カメラでリアルタイムに姿勢を解析します！")
+st.write("カメラを使用して姿勢を解析します！")
 
 # 側面選択
 side_option = st.radio("側面を選択", ("左側面", "右側面"))
@@ -23,25 +22,6 @@ st.text(f"現在の側面: {side_option}")
 # 保存用ディレクトリ
 save_path = "captured_images"
 os.makedirs(save_path, exist_ok=True)
-
-# 画像の初期化オプション
-clear_images = st.checkbox("アプリ起動時に前回の画像を消去する", value=True)
-if clear_images and os.path.exists(os.path.join(save_path, "before.png")) and os.path.exists(os.path.join(save_path, "after.png")):
-    for file_name in ["before.png", "after.png", "comparison.png"]:
-        file_path = os.path.join(save_path, file_name)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-# カメラ起動関数
-def get_camera_frame():
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1080)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1920)
-    time.sleep(1)
-    return cap
-
-cap = get_camera_frame()
-frame_display = st.empty()
 
 # 矢状面用のマーカーセット
 LEFT_SAGITTAL_MARKERS = [
@@ -55,89 +35,73 @@ RIGHT_SAGITTAL_MARKERS = [
     mp_pose.PoseLandmark.RIGHT_ANKLE
 ]
 
-# フレーム処理関数（リアルタイム映像 + 矢状面マーカー描画）
-def process_frame():
-    ret, frame = cap.read()
-    if not ret:
-        return None
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # OpenCVのBGR画像をRGBに変換
-    results = pose.process(frame)
-    height, width, _ = frame.shape
+# カメラ入力
+image_file = st.camera_input("📸 カメラで撮影してください")
+
+# 画像処理関数
+def process_image(image):
+    image = Image.open(image)
+    image = np.array(image)
+
+    # OpenCV用にBGR変換
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+    # MediaPipeで姿勢解析
+    results = pose.process(image)
+    height, width, _ = image.shape
 
     if results.pose_landmarks:
         selected_markers = LEFT_SAGITTAL_MARKERS if side_option == "左側面" else RIGHT_SAGITTAL_MARKERS
         points = {}
+
         for marker in selected_markers:
             lm = results.pose_landmarks.landmark[marker]
             cx, cy = int(lm.x * width), int(lm.y * height)
             points[marker] = (cx, cy)
-            cv2.circle(frame, (cx, cy), 12, (255, 255, 255), -1)  # 白縁
-            cv2.circle(frame, (cx, cy), 8, (255, 0, 0), -1)  # 赤点
+            cv2.circle(image, (cx, cy), 12, (255, 255, 255), -1)  # 白縁
+            cv2.circle(image, (cx, cy), 8, (255, 0, 0), -1)  # 赤点
         
         for i in range(len(selected_markers) - 1):
             if selected_markers[i] in points and selected_markers[i+1] in points:
-                cv2.line(frame, points[selected_markers[i]], points[selected_markers[i+1]], (173, 216, 230), 3)  # ライトブルー
-    
-    return frame
+                cv2.line(image, points[selected_markers[i]], points[selected_markers[i+1]], (173, 216, 230), 3)
 
-# ビフォーアフター機能
-before_image_path = os.path.join(save_path, "before.png")
-after_image_path = os.path.join(save_path, "after.png")
-comparison_image_path = os.path.join(save_path, "comparison.png")
+    return image
 
-# 撮影ボタン配置
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("📸 ビフォーを撮影"):
-        frame = process_frame()
-        if frame is not None:
-            Image.fromarray(frame).save(before_image_path)
-            st.success("ビフォー画像を撮影しました！")
-        else:
-            st.warning("フレームが取得できませんでした。カメラを確認してください。")
+# 撮影画像がある場合に処理
+if image_file:
+    processed_image = process_image(image_file)
+    st.image(processed_image, caption="解析結果", use_column_width=True)
 
-with col2:
-    if st.button("📷 アフターを撮影＆比較"):
-        frame = process_frame()
-        if frame is not None:
-            Image.fromarray(frame).save(after_image_path)
-            st.success("アフター画像を撮影しました！")
+    # 撮影ボタン
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📸 ビフォーを保存"):
+            Image.fromarray(processed_image).save(os.path.join(save_path, "before.png"))
+            st.success("ビフォー画像を保存しました！")
 
-# 画像表示とダウンロード
-before_exists = os.path.exists(before_image_path)
-after_exists = os.path.exists(after_image_path)
-if before_exists:
-    before_image = Image.open(before_image_path)
-    st.image(before_image, caption="ビフォー", use_container_width=True)
-    st.download_button("📥 ビフォー画像をダウンロード", data=open(before_image_path, "rb").read(), file_name="before.png", mime="image/png")
+    with col2:
+        if st.button("📷 アフターを保存＆比較"):
+            Image.fromarray(processed_image).save(os.path.join(save_path, "after.png"))
+            st.success("アフター画像を保存しました！")
 
-if after_exists:
-    after_image = Image.open(after_image_path)
-    st.image(after_image, caption="アフター", use_container_width=True)
-    st.download_button("📥 アフター画像をダウンロード", data=open(after_image_path, "rb").read(), file_name="after.png", mime="image/png")
+# ビフォーアフター画像表示
+before_path = os.path.join(save_path, "before.png")
+after_path = os.path.join(save_path, "after.png")
+if os.path.exists(before_path):
+    before_image = Image.open(before_path)
+    st.image(before_image, caption="ビフォー", use_column_width=True)
 
-    if before_exists:
-        before_np = np.array(before_image)
-        after_np = np.array(after_image)
-        
-        if before_np.shape != after_np.shape:
-            height = min(before_np.shape[0], after_np.shape[0])
-            width = min(before_np.shape[1], after_np.shape[1])
-            before_np = cv2.resize(before_np, (width, height))
-            after_np = cv2.resize(after_np, (width, height))
-        
+if os.path.exists(after_path):
+    after_image = Image.open(after_path)
+    st.image(after_image, caption="アフター", use_column_width=True)
+
+    # ビフォーアフター比較
+    before_np = np.array(before_image)
+    after_np = np.array(after_image)
+
+    if before_np.shape == after_np.shape:
         comparison_image = np.hstack((before_np, after_np))
-        Image.fromarray(comparison_image).save(comparison_image_path)
-        
-        comparison_pil = Image.open(comparison_image_path)
-        st.image(comparison_pil, caption="ビフォーアフター比較", use_container_width=True)
-        st.download_button("📥 ビフォーアフター画像をダウンロード", data=open(comparison_image_path, "rb").read(), file_name="comparison.png", mime="image/png")
-
-# ストリーム処理ループ
-while True:
-    frame = process_frame()
-    if frame is not None:
-        frame_display.image(frame, channels="RGB")
+        st.image(comparison_image, caption="ビフォーアフター比較", use_column_width=True)
     else:
-        break
+        st.warning("ビフォーアフター画像のサイズが異なるため、比較できません。")
 
