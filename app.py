@@ -33,28 +33,28 @@ if clear_images:
 
 # 矢状面用のマーカーセット
 LEFT_SAGITTAL_MARKERS = [
-    mp_pose.PoseLandmark.LEFT_EAR, mp_pose.PoseLandmark.LEFT_SHOULDER,
-    mp_pose.PoseLandmark.LEFT_HIP, mp_pose.PoseLandmark.LEFT_KNEE,
-    mp_pose.PoseLandmark.LEFT_ANKLE
+    "LEFT_EAR", "LEFT_SHOULDER", "LEFT_HIP", "LEFT_KNEE", "LEFT_ANKLE"
 ]
 RIGHT_SAGITTAL_MARKERS = [
-    mp_pose.PoseLandmark.RIGHT_EAR, mp_pose.PoseLandmark.RIGHT_SHOULDER,
-    mp_pose.PoseLandmark.RIGHT_HIP, mp_pose.PoseLandmark.RIGHT_KNEE,
-    mp_pose.PoseLandmark.RIGHT_ANKLE
+    "RIGHT_EAR", "RIGHT_SHOULDER", "RIGHT_HIP", "RIGHT_KNEE", "RIGHT_ANKLE"
 ]
 
 # フレーム処理関数（画像 + 矢状面マーカー描画）
-def process_image(image):
+def process_image(image, side):
     image_np = np.array(image)
     image_rgb = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)  # PIL画像をOpenCV形式に変換
     results = pose.process(image_rgb)
     height, width, _ = image_np.shape
 
     if results.pose_landmarks:
-        selected_markers = LEFT_SAGITTAL_MARKERS if side_option == "左側面" else RIGHT_SAGITTAL_MARKERS
+        selected_markers = LEFT_SAGITTAL_MARKERS if side == "左側面" else RIGHT_SAGITTAL_MARKERS
         points = {}
         for marker in selected_markers:
-            lm = results.pose_landmarks.landmark[marker]
+            landmark = getattr(mp_pose.PoseLandmark, marker, None)
+            if landmark is None:
+                continue
+
+            lm = results.pose_landmarks.landmark[landmark]
             cx, cy = int(lm.x * width), int(lm.y * height)
             points[marker] = (cx, cy)
             cv2.circle(image_np, (cx, cy), 12, (255, 255, 255), -1)  # 白縁
@@ -80,17 +80,17 @@ after_uploaded = st.file_uploader("アフター画像を選択", type=["png", "j
 
 # 画像解析処理
 if before_uploaded:
-    before_image = Image.open(before_uploaded)
-    processed_before = process_image(before_image)
+    before_image = Image.open(before_uploaded).convert("RGB")  # RGB変換
+    processed_before = process_image(before_image, side_option)
     processed_before.save(before_image_path)
-    st.image(processed_before, caption="解析済みビフォー画像", use_container_width=True)
+    st.image(processed_before, caption="解析済みビフォー画像", use_column_width=True)
     st.download_button("📥 ビフォー画像をダウンロード", data=open(before_image_path, "rb").read(), file_name="before.png", mime="image/png")
 
 if after_uploaded:
-    after_image = Image.open(after_uploaded)
-    processed_after = process_image(after_image)
+    after_image = Image.open(after_uploaded).convert("RGB")  # RGB変換
+    processed_after = process_image(after_image, side_option)
     processed_after.save(after_image_path)
-    st.image(processed_after, caption="解析済みアフター画像", use_container_width=True)
+    st.image(processed_after, caption="解析済みアフター画像", use_column_width=True)
     st.download_button("📥 アフター画像をダウンロード", data=open(after_image_path, "rb").read(), file_name="after.png", mime="image/png")
 
     # ビフォーアフター比較
@@ -98,16 +98,16 @@ if after_uploaded:
         before_np = np.array(processed_before)
         after_np = np.array(processed_after)
 
-        if before_np.shape != after_np.shape:
-            height = min(before_np.shape[0], after_np.shape[0])
-            width = min(before_np.shape[1], after_np.shape[1])
-            before_np = cv2.resize(before_np, (width, height))
-            after_np = cv2.resize(after_np, (width, height))
+        # サイズを統一
+        height = min(before_np.shape[0], after_np.shape[0])
+        width = min(before_np.shape[1], after_np.shape[1])
+        before_np = cv2.resize(before_np, (width, height))
+        after_np = cv2.resize(after_np, (width, height))
         
         comparison_image = np.hstack((before_np, after_np))
-        Image.fromarray(comparison_image).save(comparison_image_path)
+        comparison_pil = Image.fromarray(cv2.cvtColor(comparison_image, cv2.COLOR_BGR2RGB))
+        comparison_pil.save(comparison_image_path)
 
-        comparison_pil = Image.open(comparison_image_path)
-        st.image(comparison_pil, caption="ビフォーアフター比較", use_container_width=True)
+        st.image(comparison_pil, caption="ビフォーアフター比較", use_column_width=True)
         st.download_button("📥 ビフォーアフター画像をダウンロード", data=open(comparison_image_path, "rb").read(), file_name="comparison.png", mime="image/png")
 
