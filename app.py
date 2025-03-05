@@ -3,22 +3,17 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import os
-import time
 from PIL import Image
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
-
-# OpenCVのエラーを回避するための環境変数設定
-os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"
 
 # MediaPipeのPoseモデルを初期化
 mp_pose = mp.solutions.pose
-pose = mp_pose.Pose()
+pose = mp_pose.Pose(static_image_mode=True)
 mp_drawing = mp.solutions.drawing_utils
 
 # Streamlitの設定
 st.set_page_config(page_title="姿勢分析アプリ", layout="centered")
 st.title("📸 立位姿勢（矢状面）分析アプリ")
-st.write("カメラでリアルタイムに姿勢を解析します！")
+st.write("撮影済みの画像をアップロードして姿勢解析を行います。")
 
 # 側面選択
 side_option = st.radio("側面を選択", ("左側面", "右側面"))
@@ -48,88 +43,67 @@ RIGHT_SAGITTAL_MARKERS = [
     mp_pose.PoseLandmark.RIGHT_ANKLE
 ]
 
-# OpenCVを使用したフレーム処理クラス
-class VideoTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.pose = mp_pose.Pose()
+# フレーム処理関数（画像 + 矢状面マーカー描画）
+def process_image(image):
+    image_np = np.array(image)
+    image_rgb = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)  # PIL画像をOpenCV形式に変換
+    results = pose.process(image_rgb)
+    height, width, _ = image_np.shape
 
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = self.pose.process(img_rgb)
-        height, width, _ = img.shape
+    if results.pose_landmarks:
+        selected_markers = LEFT_SAGITTAL_MARKERS if side_option == "左側面" else RIGHT_SAGITTAL_MARKERS
+        points = {}
+        for marker in selected_markers:
+            lm = results.pose_landmarks.landmark[marker]
+            cx, cy = int(lm.x * width), int(lm.y * height)
+            points[marker] = (cx, cy)
+            cv2.circle(image_np, (cx, cy), 12, (255, 255, 255), -1)  # 白縁
+            cv2.circle(image_np, (cx, cy), 8, (255, 0, 0), -1)  # 赤点
+        
+        for i in range(len(selected_markers) - 1):
+            if selected_markers[i] in points and selected_markers[i+1] in points:
+                cv2.line(image_np, points[selected_markers[i]], points[selected_markers[i+1]], (173, 216, 230), 3)  # ライトブルー
 
-        if results.pose_landmarks:
-            selected_markers = LEFT_SAGITTAL_MARKERS if side_option == "左側面" else RIGHT_SAGITTAL_MARKERS
-            points = {}
-            for marker in selected_markers:
-                lm = results.pose_landmarks.landmark[marker]
-                cx, cy = int(lm.x * width), int(lm.y * height)
-                points[marker] = (cx, cy)
-                cv2.circle(img, (cx, cy), 12, (255, 255, 255), -1)
-                cv2.circle(img, (cx, cy), 8, (255, 0, 0), -1)
-
-            for i in range(len(selected_markers) - 1):
-                if selected_markers[i] in points and selected_markers[i + 1] in points:
-                    cv2.line(img, points[selected_markers[i]], points[selected_markers[i + 1]], (173, 216, 230), 3)
-
-        return img
-
-# WebRTCによるカメラ起動
-webrtc_ctx = webrtc_streamer(
-    key="姿勢分析",
-    video_processor_factory=VideoTransformer,
-    async_processing=True
-)
+    return Image.fromarray(image_np)
 
 # ビフォーアフター機能
 before_image_path = os.path.join(save_path, "before.png")
 after_image_path = os.path.join(save_path, "after.png")
 comparison_image_path = os.path.join(save_path, "comparison.png")
 
-col1, col2 = st.columns(2)
+# 画像アップロード
+st.header("📤 ビフォー画像をアップロード")
+before_uploaded = st.file_uploader("ビフォー画像を選択", type=["png", "jpg", "jpeg"], key="before")
 
-with col1:
-    if st.button("📸 ビフォーを撮影"):
-        if webrtc_ctx.video_processor:
-            frame = webrtc_ctx.video_processor.transform(webrtc_ctx.video_transformer.last_frame)
-            if frame is not None:
-                Image.fromarray(frame).save(before_image_path)
-                st.success("ビフォー画像を撮影しました！")
-        else:
-            st.warning("カメラが起動していません。")
+st.header("📤 アフター画像をアップロード")
+after_uploaded = st.file_uploader("アフター画像を選択", type=["png", "jpg", "jpeg"], key="after")
 
-with col2:
-    if st.button("📷 アフターを撮影＆比較"):
-        if webrtc_ctx.video_processor:
-            frame = webrtc_ctx.video_processor.transform(webrtc_ctx.video_transformer.last_frame)
-            if frame is not None:
-                Image.fromarray(frame).save(after_image_path)
-                st.success("アフター画像を撮影しました！")
-        else:
-            st.warning("カメラが起動していません。")
-
-# 画像表示とダウンロード
-if os.path.exists(before_image_path):
-    before_image = Image.open(before_image_path)
-    st.image(before_image, caption="ビフォー", use_container_width=True)
+# 画像解析処理
+if before_uploaded:
+    before_image = Image.open(before_uploaded)
+    processed_before = process_image(before_image)
+    processed_before.save(before_image_path)
+    st.image(processed_before, caption="解析済みビフォー画像", use_container_width=True)
     st.download_button("📥 ビフォー画像をダウンロード", data=open(before_image_path, "rb").read(), file_name="before.png", mime="image/png")
 
-if os.path.exists(after_image_path):
-    after_image = Image.open(after_image_path)
-    st.image(after_image, caption="アフター", use_container_width=True)
+if after_uploaded:
+    after_image = Image.open(after_uploaded)
+    processed_after = process_image(after_image)
+    processed_after.save(after_image_path)
+    st.image(processed_after, caption="解析済みアフター画像", use_container_width=True)
     st.download_button("📥 アフター画像をダウンロード", data=open(after_image_path, "rb").read(), file_name="after.png", mime="image/png")
 
-    if os.path.exists(before_image_path):
-        before_np = np.array(before_image)
-        after_np = np.array(after_image)
+    # ビフォーアフター比較
+    if before_uploaded:
+        before_np = np.array(processed_before)
+        after_np = np.array(processed_after)
 
         if before_np.shape != after_np.shape:
             height = min(before_np.shape[0], after_np.shape[0])
             width = min(before_np.shape[1], after_np.shape[1])
             before_np = cv2.resize(before_np, (width, height))
             after_np = cv2.resize(after_np, (width, height))
-
+        
         comparison_image = np.hstack((before_np, after_np))
         Image.fromarray(comparison_image).save(comparison_image_path)
 
