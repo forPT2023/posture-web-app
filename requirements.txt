@@ -4,8 +4,4 @@ mediapipe==0.10.9
 numpy==1.23.5
 pillow==10.2.0
 protobuf==3.20.3
-<<<<<<< HEAD
 streamlit-webrtc
-=======
-streamlit-webrtc
->>>>>>> 7b9f3c4 (WIP: 一時的なコミット（後で修正可能）)
