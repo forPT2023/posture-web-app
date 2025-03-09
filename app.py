@@ -7,7 +7,14 @@ from PIL import Image
 
 # MediaPipeのPoseモデルを初期化
 mp_pose = mp.solutions.pose
-pose = mp_pose.Pose(static_image_mode=True)
+pose = mp_pose.Pose(
+    static_image_mode=True,
+    model_complexity=1,  # モデルの計算負荷を抑える（0〜2）
+    smooth_landmarks=True,
+    enable_segmentation=False,  # GPUを使用する機能を無効化
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
 mp_drawing = mp.solutions.drawing_utils
 
 # Streamlitの設定
